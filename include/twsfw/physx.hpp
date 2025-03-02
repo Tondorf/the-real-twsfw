@@ -18,9 +18,12 @@ class Physx final
     Physx(size_t n_players, const twsfwphysx_world &world);
 
     Physx(Physx &other) = delete;
-    Physx(Physx &&other) = delete;
+
+    Physx(Physx &&other) noexcept;
+
     Physx &operator=(const Physx &other) = delete;
-    Physx &operator=(Physx &&other) = delete;
+
+    Physx &operator=(Physx &&other) noexcept;
 
     ~Physx();
 
@@ -28,7 +31,11 @@ class Physx final
 
     std::span<twsfwphysx_agent> get_agents() const;
 
+    size_t agents_size() const;
+
     std::span<twsfwphysx_missile> get_missiles() const;
+
+    size_t missiles_size() const;
 
     const twsfwphysx_world &get_world() const;
 

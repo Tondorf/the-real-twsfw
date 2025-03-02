@@ -41,9 +41,12 @@ class TWSFW_EXPORT Game final
                   const World &world);
 
     Game(const Game &) = delete;
-    Game(const Game &&) = delete;
+
+    Game(Game &&other) noexcept;
+
     Game &operator=(const Game &) = delete;
-    Game &operator=(Game &&) = delete;
+
+    Game &operator=(Game &&other) noexcept;
 
     ~Game();
 

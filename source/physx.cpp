@@ -18,6 +18,41 @@ Physx::Physx(const size_t n_players, const twsfwphysx_world &world)
 {
 }
 
+Physx::Physx(Physx &&other) noexcept
+    : m_agents(other.m_agents)
+    , m_missiles(other.m_missiles)
+    , m_world(other.m_world)
+    , m_simulation_buffer(other.m_simulation_buffer)
+{
+    other.m_agents.agents = nullptr;
+    other.m_agents.size = 0;
+
+    other.m_missiles.missiles = nullptr;
+    other.m_missiles.size = 0;
+
+    other.m_simulation_buffer = nullptr;
+}
+
+Physx &Physx::operator=(Physx &&other) noexcept
+{
+    if (this != &other) {
+        m_agents = other.m_agents;
+        other.m_agents.agents = nullptr;
+        other.m_agents.size = 0;
+
+        m_missiles = other.m_missiles;
+        other.m_missiles.missiles = nullptr;
+        other.m_missiles.size = 0;
+
+        m_world = other.m_world;
+
+        m_simulation_buffer = other.m_simulation_buffer;
+        other.m_simulation_buffer = nullptr;
+    }
+
+    return *this;
+}
+
 Physx::~Physx()
 {
     twsfwphysx_delete_missile_batch(&m_missiles);
@@ -36,9 +71,19 @@ std::span<twsfwphysx_agent> Physx::get_agents() const
     return std::span{m_agents.agents, static_cast<size_t>(m_agents.size)};
 }
 
+size_t Physx::agents_size() const
+{
+    return static_cast<size_t>(m_agents.size);
+}
+
 std::span<twsfwphysx_missile> Physx::get_missiles() const
 {
     return std::span{m_missiles.missiles, static_cast<size_t>(m_missiles.size)};
+}
+
+size_t Physx::missiles_size() const
+{
+    return static_cast<size_t>(m_missiles.size);
 }
 
 const twsfwphysx_world &Physx::get_world() const

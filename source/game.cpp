@@ -6,6 +6,7 @@
 #include <cstring>
 #include <numbers>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "twsfw/game.hpp"
@@ -77,7 +78,7 @@ Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents,
         m_wasm_agents.emplace_back(make_agent(wasm));
     }
 
-    for (auto i = 0U; i < m_physx.get_agents().size(); i++) {
+    for (auto i = 0U; i < m_physx.agents_size(); i++) {
         constexpr auto two_pi = 2.F * std::numbers::pi_v<float>;
         const float angle = static_cast<float>(i)
             / static_cast<float>(m_physx.get_agents().size()) * two_pi;
@@ -87,6 +88,34 @@ Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents,
                                    .a = 0.F,
                                    .hp = 4};
     }
+}
+
+Game::Game(Game &&other) noexcept
+    : m_engine(other.m_engine)
+    , m_store(other.m_store)
+    , m_context(other.m_context)
+    , m_physx(std::move(other.m_physx))
+    , m_wasm_agents(std::move(other.m_wasm_agents))
+{
+}
+
+Game &Game::operator=(Game &&other) noexcept
+{
+    if (this != &other) {
+        m_engine = other.m_engine;
+        other.m_engine = nullptr;
+
+        m_store = other.m_store;
+        other.m_store = nullptr;
+
+        m_context = other.m_context;
+        other.m_context = nullptr;
+
+        m_physx = std::move(other.m_physx);
+        m_wasm_agents = std::move(other.m_wasm_agents);
+    }
+
+    return *this;
 }
 
 Game::~Game()
@@ -187,14 +216,12 @@ void Game::call_agent(size_t agent_idx,
     std::array<wasmtime_val_t, 7> args{};
     args[0] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[0])}};
-    args[1] = {
-        .kind = WASMTIME_I32,
-        .of = {.i32 = static_cast<int32_t>(m_physx.get_agents().size())}};
+    args[1] = {.kind = WASMTIME_I32,
+               .of = {.i32 = static_cast<int32_t>(m_physx.agents_size())}};
     args[2] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[1])}};
-    args[3] = {
-        .kind = WASMTIME_I32,
-        .of = {.i32 = static_cast<int32_t>(m_physx.get_missiles().size())}};
+    args[3] = {.kind = WASMTIME_I32,
+               .of = {.i32 = static_cast<int32_t>(m_physx.missiles_size())}};
     args[4] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[2])}};
     args[4] = {.kind = WASMTIME_I32,
@@ -219,7 +246,7 @@ void Game::call_agent(size_t agent_idx,
                 get_agent_memory(m_wasm_agents[agent_idx]) + 0,
                 sizeof(int32_t));
     assert(action_type >= 0 and action_type <= 2);
-    assert(action_type == static_cast<int32_t>(m_physx.get_agents().size()));
+    assert(action_type == static_cast<int32_t>(m_physx.agents_size()));
 
     if (action_type == 0) {
         m_physx.rotate_agent(agent_idx, action_value);
@@ -241,7 +268,7 @@ Game::State Game::tick(const float t, const int32_t n_steps)
     std::vector<uint8_t> buffer(sizeof(int32_t));
     const auto &offsets = serialize_world(buffer);
 
-    for (auto i = 0U; i < m_physx.get_agents().size(); i++) {
+    for (auto i = 0U; i < m_physx.agents_size(); i++) {
         call_agent(i, buffer, offsets);
     }
 
