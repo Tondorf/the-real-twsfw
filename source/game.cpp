@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <numbers>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -64,18 +66,22 @@ Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents,
            const World &world,
            const size_t ticks_per_second)
     : m_engine(wasm_engine_new())
-    , m_physx(Physx(wasm_agents.size() * agent_multiplicity,
-                    {.restitution = world.restitution,
-                     .agent_radius = world.agent_radius,
-                     .missile_acceleration = world.missile_acceleration}))
+    , m_physx(Physx(
+          wasm_agents.size() * agent_multiplicity,
+          {.restitution = world.restitution,
+           .agent_radius = world.agent_radius,
+           .missile_acceleration = world.missile_max_velocity
+               / static_cast<float>(ticks_per_second * ticks_per_second)}))
     , m_world(world)
+    , m_ticks_per_second(ticks_per_second)
     , m_agents_multiplicity(agent_multiplicity)
     , m_missile_cooldown(m_agents_multiplicity * wasm_agents.size(), 0.F)
 {
     m_world.agent_healing_rate /= static_cast<float>(ticks_per_second);
     m_world.agent_cooldown /= static_cast<float>(ticks_per_second);
+    m_world.agent_max_velocity /= static_cast<float>(ticks_per_second);
     m_world.agent_max_rotation_speed /= static_cast<float>(ticks_per_second);
-    m_world.missile_acceleration /= static_cast<float>(ticks_per_second);
+    m_world.missile_max_velocity /= static_cast<float>(ticks_per_second);
 
     assert(m_engine != nullptr);
 
@@ -107,6 +113,7 @@ Game::Game(Game &&other) noexcept
     , m_context(other.m_context)
     , m_physx(std::move(other.m_physx))
     , m_world(other.m_world)
+    , m_ticks_per_second(other.m_ticks_per_second)
     , m_wasm_agents(std::move(other.m_wasm_agents))
     , m_agents_multiplicity(other.m_agents_multiplicity)
     , m_missile_cooldown(std::move(other.m_missile_cooldown))
@@ -127,6 +134,7 @@ Game &Game::operator=(Game &&other) noexcept
 
         m_physx = std::move(other.m_physx);
         m_world = other.m_world;
+        m_ticks_per_second = other.m_ticks_per_second;
         m_wasm_agents = std::move(other.m_wasm_agents);
         m_agents_multiplicity = other.m_agents_multiplicity;
         m_missile_cooldown = std::move(other.m_missile_cooldown);
@@ -155,18 +163,24 @@ WASMAgent Game::make_agent(const std::basic_string<uint8_t> &wasm) const
                             wasm.data(),
                             wasm.size(),
                             &module);
-    assert(error == nullptr and module != nullptr);
+    if (error != nullptr or module == nullptr) {
+        throw std::runtime_error("Could not build WASM module");
+    }
 
     auto *instance = new wasmtime_instance_t{};
     wasm_trap_t *trap = nullptr;
     error = wasmtime_instance_new(ctx, module, nullptr, 0, instance, &trap);
-    assert(error == nullptr and trap == nullptr);
+    if (error != nullptr or trap != nullptr) {
+        throw std::runtime_error("Could not instantiate WASM module");
+    }
 
     auto *func = new wasmtime_extern_t{};
     bool ok = wasmtime_instance_export_get(
         ctx, instance, "twsfw_agent_act", strlen("twsfw_agent_act"), func);
-    assert(ok);
-    assert(func->kind == WASMTIME_EXTERN_FUNC);
+    if (not ok or func->kind != WASMTIME_EXTERN_FUNC) {
+        throw std::runtime_error(
+            "Could not find twsfw_agent_act in WASM module");
+    }
 
     wasmtime_extern_t item;
     ok = wasmtime_instance_export_get(
@@ -259,7 +273,9 @@ void Game::call_agent(const size_t team,
                                &result,
                                1,
                                &trap);
-        assert(error == nullptr and trap == nullptr);
+        if (error != nullptr or trap != nullptr) {
+            std::cerr << "Agent " << agent_idx << " failed!\n";
+        }
         const auto action_value = result.of.f32;
 
         int32_t action_type = 0;
@@ -267,36 +283,56 @@ void Game::call_agent(const size_t team,
                     get_agent_memory(m_wasm_agents[team]) + 0,
                     sizeof(int32_t));
 
-        if (action_type == 0) {
-            m_physx.rotate_agent(
-                agent_idx,
-                std::min(m_world.agent_max_rotation_speed, action_value));
-        } else if (action_type == 1) {
-            m_physx.get_agents()[agent_idx].a = action_value;
-        } else if (action_type == 2 and m_missile_cooldown[agent_idx] <= 0.F) {
-            m_physx.fire(agent_idx);
+        switch (action_type) {
+            case ROTATE: {
+                const auto angle =
+                    std::min(m_world.agent_max_rotation_speed, action_value);
+                m_physx.rotate_agent(agent_idx, angle);
+            } break;
+
+            case ACCELERATE: {
+                const auto max_acceleration = m_world.agent_max_velocity
+                    / static_cast<float>(m_ticks_per_second);
+                const auto a =
+                    std::min(std::max(action_value, 0.F), max_acceleration);
+                m_physx.get_agents()[agent_idx].a = a;
+            } break;
+
+            case FIRE: {
+                if (m_missile_cooldown[agent_idx] <= 0.F) {
+                    m_physx.fire(agent_idx, m_world.missile_max_velocity);
+                }
+            } break;
+
+            default:
+                std::cerr << "Unknown action " << action_type << " from agent "
+                          << agent_idx << '\n';
         }
     }
 }
 
 Game::State Game::tick(const float t, const int32_t n_steps)
 {
-    for (auto i = 0U; i < m_physx.agents_size(); i++) {
-        auto &agent = m_physx.get_agents()[i];
-        agent.hp = std::min(
-            std::max(agent.hp, -1.F) + m_world.agent_healing_rate, 4.F);
+    {
+        const auto &agents = m_physx.get_agents();
+        for (auto i = 0U; i < agents.size(); i++) {
+            agents[i].hp = std::min(
+                std::max(agents[i].hp, -1.F) + m_world.agent_healing_rate, 4.F);
 
-        auto &cooldown = m_missile_cooldown[i];
-        cooldown = std::max(cooldown - m_world.agent_cooldown, 0.F);
+            auto &cooldown = m_missile_cooldown[i];
+            cooldown = std::max(cooldown - m_world.agent_cooldown, 0.F);
+        }
     }
 
     m_physx.simulate(t, n_steps);
 
-    std::vector<uint8_t> buffer(sizeof(int32_t));
-    const auto &offsets = serialize_world(buffer);
+    {
+        std::vector<uint8_t> buffer(sizeof(int32_t));
+        const auto &offsets = serialize_world(buffer);
 
-    for (auto i = 0U; i < m_wasm_agents.size(); i++) {
-        call_agent(i, buffer, offsets);
+        for (auto i = 0U; i < m_wasm_agents.size(); i++) {
+            call_agent(i, buffer, offsets);
+        }
     }
 
     std::vector<twsfw_agent> agents(m_physx.agents_size());

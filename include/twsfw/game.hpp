@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -19,9 +20,10 @@ class TWSFW_EXPORT Game final
         float agent_radius;
         float agent_healing_rate;
         float agent_cooldown;
+        float agent_max_velocity;
         float agent_max_rotation_speed;
         float restitution;
-        float missile_acceleration;
+        float missile_max_velocity;
     };
 
   private:
@@ -31,6 +33,7 @@ class TWSFW_EXPORT Game final
 
     Physx m_physx;
     World m_world;
+    size_t m_ticks_per_second;
 
     std::vector<WASMAgent> m_wasm_agents;
     size_t m_agents_multiplicity;

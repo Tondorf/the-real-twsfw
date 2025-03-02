@@ -39,7 +39,7 @@ struct twsfw_world
     float missile_acceleration;
 };
 
-enum twsfw_action_type
+enum twsfw_action_type : uint8_t
 {
     ROTATE = 0,
     ACCELERATE = 1,

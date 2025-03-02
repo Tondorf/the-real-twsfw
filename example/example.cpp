@@ -26,9 +26,10 @@ int main(int argc, char *argv[])
                      {.agent_radius = .1F,
                       .agent_healing_rate = 6.F,
                       .agent_cooldown = 2.F,
+                      .agent_max_velocity = 1.F,
                       .agent_max_rotation_speed = 2.F,
                       .restitution = .5F,
-                      .missile_acceleration = 2.F},
+                      .missile_max_velocity = 2.F},
                      60};
 
     constexpr float t = 1.F;

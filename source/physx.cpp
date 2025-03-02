@@ -97,7 +97,7 @@ void Physx::rotate_agent(size_t agent_idx, float angle) const
     twsfwphysx_rotate_agent(&m_agents.agents[agent_idx], angle);
 }
 
-void Physx::fire(size_t agent_idx)
+void Physx::fire(size_t agent_idx, const float v)
 {
     auto &agent = m_agents.agents[agent_idx];
     const float theta = m_world.agent_radius * 1.01F;
@@ -116,7 +116,7 @@ void Physx::fire(size_t agent_idx)
                                   .y = (cos_theta * r.y) + (sin_theta * w.y),
                                   .z = (cos_theta * r.z) + (sin_theta * w.z)},
                             .u = agent.u,
-                            .v = agent.v,
+                            .v = v,
                             .payload = static_cast<int32_t>(agent_idx)});
 }
 

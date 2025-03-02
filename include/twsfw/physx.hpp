@@ -43,6 +43,6 @@ class Physx final
 
     void rotate_agent(size_t agent_idx, float angle) const;
 
-    void fire(size_t agent_idx);
+    void fire(size_t agent_idx, float v);
 };
 }  // namespace twsfw
