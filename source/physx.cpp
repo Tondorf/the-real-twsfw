@@ -116,7 +116,8 @@ void Physx::fire(size_t agent_idx)
                                   .y = (cos_theta * r.y) + (sin_theta * w.y),
                                   .z = (cos_theta * r.z) + (sin_theta * w.z)},
                             .u = agent.u,
-                            .v = agent.v});
+                            .v = agent.v,
+                            .payload = static_cast<int32_t>(agent_idx)});
 }
 
 }  // namespace twsfw

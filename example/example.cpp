@@ -21,15 +21,21 @@ int main(int argc, char *argv[])
     file.read(std::bit_cast<char *>(data.data()), size);
 
     const std::vector wasm_agents{data, data};
-    twsfw::Game game{
-        wasm_agents,
-        {.restitution = 1.F, .agent_radius = .1F, .missile_acceleration = 2.F}};
+    twsfw::Game game{wasm_agents,
+                     2,
+                     {.agent_radius = .1F,
+                      .agent_healing_rate = 6.F,
+                      .agent_cooldown = 2.F,
+                      .agent_max_rotation_speed = 2.F,
+                      .restitution = .5F,
+                      .missile_acceleration = 2.F},
+                     60};
 
     constexpr float t = 1.F;
     constexpr int32_t n_steps = 1'000;
     auto state = game.tick(t, n_steps);
-    assert(state.agents.size() == 2);
-    assert(state.missiles.size() == 2);
+    assert(state.agents.size() == 4);
+    assert(state.missiles.size() == 4);
 
     return 0;
 }
