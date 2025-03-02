@@ -39,6 +39,13 @@ struct twsfw_world
     float missile_acceleration;
 };
 
+enum twsfw_action_type
+{
+    ROTATE = 0,
+    ACCELERATE = 1,
+    FIRE = 2
+};
+
 float twsfw_agent_act(struct twsfw_agent *agents,
                       int32_t n_agents,
                       const struct twsfw_missile *missiles,
