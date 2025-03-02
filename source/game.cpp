@@ -1,13 +1,16 @@
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <numbers>
 #include <string>
 #include <vector>
 
 #include "twsfw/game.hpp"
 
+#include <twsfwphysx/twsfwphysx.h>
 #include <wasm.h>
 #include <wasmtime.h>
 
@@ -54,8 +57,13 @@ void destroy_agent(::twsfw::WASMAgent &agent)
 
 namespace twsfw
 {
-Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents)
+Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents,
+           const World &world)
     : m_engine(wasm_engine_new())
+    , m_physx(Physx(wasm_agents.size(),
+                    {.restitution = world.restitution,
+                     .agent_radius = world.agent_radius,
+                     .missile_acceleration = world.missile_acceleration}))
 {
     assert(m_engine != nullptr);
 
@@ -69,22 +77,15 @@ Game::Game(const std::vector<std::basic_string<uint8_t>> &wasm_agents)
         m_wasm_agents.emplace_back(make_agent(wasm));
     }
 
-    m_state.agents.push_back({.r = {1.F, 2.F, 3.F},
-                              .u = {4.F, 5.F, 6.F},
-                              .v = 7.F,
-                              .a = 8.F,
-                              .hp = 9});
-    m_state.missiles.push_back(
-        {.r = {10.F, 20.F, 30.F}, .u = {40.F, 50.F, 60.F}, .v = 70.F});
-
-    m_state.world = {
-        .restitution = .1F,
-        .agent_radius = .2F,
-        .missile_acceleration = .3F,
-    };
-
-    for (const auto &agent : m_wasm_agents) {
-        run_agent(agent);
+    for (auto i = 0U; i < m_physx.get_agents().size(); i++) {
+        constexpr auto two_pi = 2.F * std::numbers::pi_v<float>;
+        const float angle = static_cast<float>(i)
+            / static_cast<float>(m_physx.get_agents().size()) * two_pi;
+        m_physx.get_agents()[i] = {.r = {std::cos(angle), std::sin(angle), 0.F},
+                                   .u = {0.F, 0.F, 1.F},
+                                   .v = 0.F,
+                                   .a = 0.F,
+                                   .hp = 4};
     }
 }
 
@@ -140,31 +141,32 @@ std::vector<size_t> Game::serialize_world(std::vector<uint8_t> &buffer) const
 
     auto offset = buffer.size();
     {
-        const auto n_bytes =
-            m_state.agents.size() * sizeof(m_state.agents.front());
+        const auto &agents = m_physx.get_agents();
+        const auto n_bytes = agents.size() * sizeof(agents.front());
 
         buffer.resize(offset + n_bytes);
-        std::memcpy(buffer.data() + offset, m_state.agents.data(), n_bytes);
+        std::memcpy(buffer.data() + offset, agents.data(), n_bytes);
 
         offsets.emplace_back(offset);
         offset += n_bytes;
     }
 
     {
-        const auto n_bytes =
-            m_state.missiles.size() * sizeof(m_state.missiles.front());
+        const auto &missiles = m_physx.get_missiles();
+        const auto n_bytes = missiles.size() * sizeof(missiles.front());
 
         buffer.resize(offset + n_bytes);
-        std::memcpy(buffer.data() + offset, m_state.missiles.data(), n_bytes);
+        std::memcpy(buffer.data() + offset, missiles.data(), n_bytes);
 
         offsets.emplace_back(offset);
         offset += n_bytes;
     }
 
     {
-        constexpr auto n_bytes = sizeof(m_state.world);
+        const auto &world = m_physx.get_world();
+        constexpr auto n_bytes = sizeof(world);
         buffer.resize(offset + n_bytes);
-        std::memcpy(buffer.data() + offset, &m_state.world, n_bytes);
+        std::memcpy(buffer.data() + offset, &world, n_bytes);
 
         offsets.emplace_back(offset);
         // offset += n_bytes;
@@ -173,44 +175,76 @@ std::vector<size_t> Game::serialize_world(std::vector<uint8_t> &buffer) const
     return offsets;
 }
 
-void Game::run_agent(const WASMAgent &agent) const
+void Game::call_agent(size_t agent_idx,
+                      const std::vector<uint8_t> &buffer,
+                      const std::vector<size_t> &offsets)
 {
-    std::vector<uint8_t> buffer(sizeof(int32_t));
-    const auto &offsets = serialize_world(buffer);
+    std::memcpy(get_agent_memory(m_wasm_agents[agent_idx]),
+                buffer.data(),
+                buffer.size());
+
     assert(offsets.size() == 3);
-
-    std::memcpy(get_agent_memory(agent), buffer.data(), buffer.size());
-
     std::array<wasmtime_val_t, 7> args{};
     args[0] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[0])}};
-    args[1] = {.kind = WASMTIME_I32,
-               .of = {.i32 = static_cast<int32_t>(m_state.agents.size())}};
+    args[1] = {
+        .kind = WASMTIME_I32,
+        .of = {.i32 = static_cast<int32_t>(m_physx.get_agents().size())}};
     args[2] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[1])}};
-    args[3] = {.kind = WASMTIME_I32,
-               .of = {.i32 = static_cast<int32_t>(m_state.missiles.size())}};
+    args[3] = {
+        .kind = WASMTIME_I32,
+        .of = {.i32 = static_cast<int32_t>(m_physx.get_missiles().size())}};
     args[4] = {.kind = WASMTIME_I32,
                .of = {.i32 = static_cast<int32_t>(offsets[2])}};
-    args[4] = {.kind = WASMTIME_I32, .of = {.i32 = 0}},
+    args[4] = {.kind = WASMTIME_I32,
+               .of = {.i32 = static_cast<int32_t>(agent_idx)}},
     args[6] = {.kind = WASMTIME_I32, .of = {.i32 = 0}};
 
     wasmtime_val_t result;
     wasm_trap_t *trap = nullptr;
     const auto *error =
         wasmtime_func_call(static_cast<wasmtime_context_t *>(m_context),
-                           get_agent_func(agent),
+                           get_agent_func(m_wasm_agents[agent_idx]),
                            args.data(),
                            args.size(),
                            &result,
                            1,
                            &trap);
     assert(error == nullptr and trap == nullptr);
+    const auto action_value = result.of.f32;
 
     int32_t action_type = 0;
-    std::memcpy(&action_type, get_agent_memory(agent) + 0, sizeof(int32_t));
-    assert(action_type == static_cast<int32_t>(m_state.agents.size()));
+    std::memcpy(&action_type,
+                get_agent_memory(m_wasm_agents[agent_idx]) + 0,
+                sizeof(int32_t));
+    assert(action_type >= 0 and action_type <= 2);
+    assert(action_type == static_cast<int32_t>(m_physx.get_agents().size()));
 
-    assert(std::abs(result.of.f32 - 20.F) < 1e-6F);  // NOLINT
+    if (action_type == 0) {
+        m_physx.rotate_agent(agent_idx, action_value);
+    } else if (action_type == 1) {
+        m_physx.get_agents()[agent_idx].a = action_value;
+    } else if (action_type == 2) {
+        m_physx.fire(agent_idx);
+    }
+}
+
+Game::State Game::tick(const float t, const int32_t n_steps)
+{
+    for (auto &agent : m_physx.get_agents()) {
+        agent.hp = std::min(std::max(agent.hp, -1) + 2, 4);
+    }
+
+    m_physx.simulate(t, n_steps);
+
+    std::vector<uint8_t> buffer(sizeof(int32_t));
+    const auto &offsets = serialize_world(buffer);
+
+    for (auto i = 0U; i < m_physx.get_agents().size(); i++) {
+        call_agent(i, buffer, offsets);
+    }
+
+    return {.agents = m_physx.get_agents(), .missiles = m_physx.get_missiles()};
 }
 }  // namespace twsfw

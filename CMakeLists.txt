@@ -7,7 +7,7 @@ project(
         VERSION 0.1.0
         DESCRIPTION "Short description"
         HOMEPAGE_URL "https://example.com/"
-        LANGUAGES CXX
+        LANGUAGES C CXX
 )
 
 include(cmake/project-is-top-level.cmake)
@@ -18,6 +18,8 @@ include(cmake/variables.cmake)
 add_library(
         twsfw_twsfw
         source/game.cpp
+        source/twsfwphysx_impl.c
+        source/physx.cpp
 )
 add_library(twsfw::twsfw ALIAS twsfw_twsfw)
 
@@ -59,13 +61,22 @@ target_compile_features(twsfw_twsfw PUBLIC cxx_std_20)
 
 # ---- Add dependency: wasmtime ----
 
-set(wasmtime_path ${CMAKE_CURRENT_SOURCE_DIR}/wasmtime-v30.0.2-x86_64-linux-c-api/)
+set(WASMTIME_VERSION "v30.0.2")
+set(WASMTIME_ARCH "x86_64-linux")
+set(WASMTIME_ARTIFACT_URL "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-${WASMTIME_ARCH}-c-api.tar.xz")
+set(WASMTIME_ARTIFACT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/wasmtime-${WASMTIME_VERSION}-${WASMTIME_ARCH}-c-api.tar.xz")
+set(WASMTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/wasmtime-${WASMTIME_VERSION}-${WASMTIME_ARCH}-c-api")
 
-find_library(wasmtime NAMES wasmtime PATHS ${wasmtime_path}/lib)
+file(DOWNLOAD ${WASMTIME_ARTIFACT_URL} ${WASMTIME_ARTIFACT_PATH} SHOW_PROGRESS)
+execute_process(
+        COMMAND ${CMAKE_COMMAND} -E tar xJf ${WASMTIME_ARTIFACT_PATH}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
+find_library(wasmtime NAMES wasmtime PATHS ${WASMTIME_DIR}/lib NO_DEFAULT_PATH)
 if (wasmtime)
     message(STATUS "Found Wasmtime library: ${wasmtime}")
-    target_include_directories(twsfw_twsfw SYSTEM PRIVATE ${wasmtime_path}/include)
+    target_include_directories(twsfw_twsfw SYSTEM PRIVATE ${WASMTIME_DIR}/include)
     target_link_libraries(twsfw_twsfw PRIVATE ${wasmtime})
 else ()
     message(FATAL_ERROR "Wasmtime library not found!")
@@ -75,7 +86,7 @@ endif ()
 
 add_subdirectory(twsfwphysx)
 target_link_libraries(
-        twsfw_twsfw PRIVATE
+        twsfw_twsfw PUBLIC
         twsfwphysx::twsfwphysx
 )
 

@@ -13,6 +13,6 @@ float twsfw_agent_act(struct twsfw_agent *agents,
                       int32_t id,
                       int32_t *action)
 {
-    *action = n_agents;
-    return missiles[n_missiles - 1].r.y;
+    *action = 2;
+    return 0.F;
 }
